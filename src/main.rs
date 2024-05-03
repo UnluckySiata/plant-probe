@@ -4,31 +4,36 @@
 use bsp::entry;
 use embedded_hal::digital::v2::OutputPin;
 use panic_halt as _;
-use usb_device::{class_prelude::*, prelude::*};
 
-// USB Communications Class Device support
-use usbd_serial::{SerialPort, USB_CLASS_CDC};
+use embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    pixelcolor::BinaryColor,
+    prelude::*,
+    text::{Baseline, Text},
+};
+use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+
 // Provide an alias for our BSP so we can switch targets quickly.
 use rp_pico as bsp;
 
 use bsp::hal::{
-    clocks::{init_clocks_and_plls, Clock},
+    clocks::ClockSource,
+    fugit::RateExtU32,
+    gpio::{FunctionI2C, Pin},
     pac,
-    sio::Sio,
-    watchdog::Watchdog,
 };
+
+const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
 #[entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
-    let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    let mut watchdog = bsp::hal::Watchdog::new(pac.WATCHDOG);
+    let sio = bsp::hal::sio::Sio::new(pac.SIO);
 
-    // External high-speed crystal on the pico board is 12Mhz
-    let external_xtal_freq_hz = 12_000_000u32;
-    let clocks = init_clocks_and_plls(
-        external_xtal_freq_hz,
+    let clocks = bsp::hal::clocks::init_clocks_and_plls(
+        XTAL_FREQ_HZ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -36,65 +41,69 @@ fn main() -> ! {
         &mut pac.RESETS,
         &mut watchdog,
     )
-    .ok()
     .unwrap();
 
-    let _delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.get_freq().to_Hz());
+    // The single-cycle I/O block controls our GPIO pins
 
-    let pins = bsp::Pins::new(
+    // Set the pins to their default state
+    let pins = bsp::hal::gpio::Pins::new(
         pac.IO_BANK0,
         pac.PADS_BANK0,
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
 
-    let usb_bus = UsbBusAllocator::new(bsp::hal::usb::UsbBus::new(
-        pac.USBCTRL_REGS,
-        pac.USBCTRL_DPRAM,
-        clocks.usb_clock,
-        true,
+    let sda_pin: Pin<_, FunctionI2C, _> = pins.gpio0.reconfigure();
+    let scl_pin: Pin<_, FunctionI2C, _> = pins.gpio1.reconfigure();
+
+    let i2c = bsp::hal::I2C::i2c0(
+        pac.I2C0,
+        sda_pin,
+        scl_pin,
+        400.kHz(),
         &mut pac.RESETS,
-    ));
+        &clocks.system_clock,
+    );
 
-    // Set up the USB Communications Class Device driver
-    let mut serial = SerialPort::new(&usb_bus);
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0)
+        .into_buffered_graphics_mode();
 
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .strings(&[StringDescriptors::default()
-            .manufacturer("Fake company")
-            .product("Serial port")
-            .serial_number("TEST")])
-        .unwrap()
-        .device_class(USB_CLASS_CDC)
+    display.init().unwrap();
+
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On)
         .build();
 
-    // assuming a diode connected to pin 28
-    let mut led_pin = pins.gpio28.into_push_pull_output();
+    display.flush().unwrap();
 
-    let mut a = 0;
-    let mut is_on = false;
+    let mut led = pins.gpio28.into_push_pull_output();
+    led.set_high().unwrap();
     loop {
-        // must be called at least once per 10ms
-        // in order to comply with usb requirements
-        // needed for usb/serial debugging
-        _ = usb_dev.poll(&mut [&mut serial]);
+        display.clear(BinaryColor::Off).unwrap();
+        Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
+            .draw(&mut display)
+            .unwrap();
 
-        // placeholder, will need better method of delaying execution
-        if a < 300000 {
-            a += 1;
-            continue;
-        }
+        Text::with_baseline("Hello Rust!", Point::new(0, 16), text_style, Baseline::Top)
+            .draw(&mut display)
+            .unwrap();
+        display.flush().unwrap();
+        
+        delay.delay_ms(500);
 
-        if is_on {
-            led_pin.set_low().unwrap();
-            is_on = false;
-            _ = serial.write(b"off\r\n");
-        } else {
-            led_pin.set_high().unwrap();
-            is_on = true;
-            _ = serial.write(b"on\r\n");
-        }
+        display.clear(BinaryColor::Off).unwrap();
+        Text::with_baseline("Hello Rust!", Point::zero(), text_style, Baseline::Top)
+            .draw(&mut display)
+            .unwrap();
 
-        a = 0;
+        Text::with_baseline("Hello World!", Point::new(0, 16), text_style, Baseline::Top)
+            .draw(&mut display)
+            .unwrap();
+        display.flush().unwrap();
+
+        delay.delay_ms(500);
     }
 }
