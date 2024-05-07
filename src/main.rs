@@ -16,13 +16,14 @@ use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use ds18b20::{self, Ds18b20};
 use one_wire_bus::{self, Address};
 
-use heapless::String;
 use core::fmt::Write;
+use heapless::String;
 
 // Provide an alias for our BSP so we can switch targets quickly.
 use rp_pico as bsp;
 
 use bsp::hal::{
+    adc::{Adc, AdcPin},
     clocks::ClockSource,
     fugit::RateExtU32,
     gpio::{FunctionI2C, Pin},
@@ -53,9 +54,7 @@ fn main() -> ! {
     .unwrap();
 
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.get_freq().to_Hz());
-    // The single-cycle I/O block controls our GPIO pins
 
-    // Set the pins to their default state
     let pins = bsp::hal::gpio::Pins::new(
         pac.IO_BANK0,
         pac.PADS_BANK0,
@@ -105,6 +104,12 @@ fn main() -> ! {
         addr = device_address;
         break;
     }
+
+    let mut adc = Adc::new(pac.ADC, &mut pac.RESETS);
+    let adc_pin_0 = AdcPin::new(pins.gpio27.into_floating_input()).unwrap();
+    adc.free_running(&adc_pin_0);
+    adc.wait_ready();
+
     let sensor = Ds18b20::new::<Err>(addr).unwrap();
 
     let mut led_on = true;
@@ -121,9 +126,14 @@ fn main() -> ! {
         str.clear();
         display.clear(BinaryColor::Off).unwrap();
 
-        sensor.start_temp_measurement(&mut one_wire_bus, &mut delay).unwrap();
+        sensor
+            .start_temp_measurement(&mut one_wire_bus, &mut delay)
+            .unwrap();
         let data = sensor.read_data(&mut one_wire_bus, &mut delay).unwrap();
         writeln!(&mut str, "Temp - {:.3} C", data.temperature).unwrap();
+
+        let counts = adc.read_single();
+        writeln!(&mut str, "Value: {}", counts).unwrap();
 
         Text::with_baseline(&str, Point::zero(), text_style, Baseline::Top)
             .draw(&mut display)
