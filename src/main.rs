@@ -6,12 +6,18 @@ use embedded_hal::digital::v2::OutputPin;
 use panic_halt as _;
 
 use embedded_graphics::{
-    mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
+    mono_font::{ascii::FONT_8X13, MonoTextStyleBuilder},
     pixelcolor::BinaryColor,
     prelude::*,
     text::{Baseline, Text},
 };
 use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
+
+use ds18b20::{self, Ds18b20};
+use one_wire_bus::{self, Address};
+
+use heapless::String;
+use core::fmt::Write;
 
 // Provide an alias for our BSP so we can switch targets quickly.
 use rp_pico as bsp;
@@ -24,6 +30,9 @@ use bsp::hal::{
 };
 
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
+
+#[derive(Debug)]
+enum Err {}
 
 #[entry]
 fn main() -> ! {
@@ -54,6 +63,10 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let mut led = pins.gpio28.into_push_pull_output();
+    led.set_high().unwrap();
+
+    // pins for oled i2c display
     let sda_pin: Pin<_, FunctionI2C, _> = pins.gpio0.reconfigure();
     let scl_pin: Pin<_, FunctionI2C, _> = pins.gpio1.reconfigure();
 
@@ -73,37 +86,48 @@ fn main() -> ! {
     display.init().unwrap();
 
     let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_6X10)
+        .font(&FONT_8X13)
         .text_color(BinaryColor::On)
         .build();
 
-    display.flush().unwrap();
+    let mut str: String<1024> = String::new();
 
-    let mut led = pins.gpio28.into_push_pull_output();
-    led.set_high().unwrap();
+    let ow_pin = pins.gpio22.into_push_pull_output();
+    let mut one_wire_bus = one_wire_bus::OneWire::new(ow_pin).unwrap();
+
+    let mut addr = Address(0x0);
+    for device_address in one_wire_bus.devices(false, &mut delay) {
+        let device_address = device_address.unwrap();
+        if device_address.family_code() != ds18b20::FAMILY_CODE {
+            continue;
+        }
+
+        addr = device_address;
+        break;
+    }
+    let sensor = Ds18b20::new::<Err>(addr).unwrap();
+
+    let mut led_on = true;
     loop {
-        display.clear(BinaryColor::Off).unwrap();
-        Text::with_baseline("Hello world!", Point::zero(), text_style, Baseline::Top)
-            .draw(&mut display)
-            .unwrap();
+        delay.delay_ms(1000);
 
-        Text::with_baseline("Hello Rust!", Point::new(0, 16), text_style, Baseline::Top)
+        if led_on {
+            led.set_low().unwrap();
+        } else {
+            led.set_high().unwrap();
+        }
+        led_on = !led_on;
+
+        str.clear();
+        display.clear(BinaryColor::Off).unwrap();
+
+        sensor.start_temp_measurement(&mut one_wire_bus, &mut delay).unwrap();
+        let data = sensor.read_data(&mut one_wire_bus, &mut delay).unwrap();
+        writeln!(&mut str, "Temp - {:.3} C", data.temperature).unwrap();
+
+        Text::with_baseline(&str, Point::zero(), text_style, Baseline::Top)
             .draw(&mut display)
             .unwrap();
         display.flush().unwrap();
-        
-        delay.delay_ms(500);
-
-        display.clear(BinaryColor::Off).unwrap();
-        Text::with_baseline("Hello Rust!", Point::zero(), text_style, Baseline::Top)
-            .draw(&mut display)
-            .unwrap();
-
-        Text::with_baseline("Hello World!", Point::new(0, 16), text_style, Baseline::Top)
-            .draw(&mut display)
-            .unwrap();
-        display.flush().unwrap();
-
-        delay.delay_ms(500);
     }
 }
