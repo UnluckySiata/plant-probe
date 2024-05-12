@@ -4,7 +4,7 @@
 use embassy_executor::Spawner;
 use embassy_rp::adc::{self, Adc, Channel};
 use embassy_rp::bind_interrupts;
-use embassy_rp::gpio::{Level, Output, Input, OutputOpenDrain, Pull};
+use embassy_rp::gpio::{Input, Level, Output, OutputOpenDrain, Pull};
 use embassy_rp::i2c;
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::{self, Driver};
@@ -91,7 +91,7 @@ async fn main(spawner: Spawner) {
     let sensor = Ds18b20::new::<Err>(addr).unwrap();
 
     loop {
-        Timer::after_secs(1).await;
+        Timer::after_millis(500).await;
 
         str.clear();
         display.clear(BinaryColor::Off).unwrap();
@@ -106,13 +106,13 @@ async fn main(spawner: Spawner) {
         }
 
         let level = adc.read(&mut adc_pin_0).await.unwrap();
-        writeln!(&mut str, "Adc0: {:.2}", adc_ratio(level)).unwrap();
+        writeln!(&mut str, "Adc0: {:.2}", adc_ratio(level, false)).unwrap();
 
         let level = adc.read(&mut adc_pin_1).await.unwrap();
-        writeln!(&mut str, "Adc1: {:.2}", adc_ratio(level)).unwrap();
+        writeln!(&mut str, "Adc1: {:.2}", adc_ratio(level, true)).unwrap();
 
         let level = adc.read(&mut adc_pin_2).await.unwrap();
-        writeln!(&mut str, "Adc2: {:.2}", adc_ratio(level)).unwrap();
+        writeln!(&mut str, "Adc2: {:.2}", adc_ratio(level, false)).unwrap();
 
         let temp = adc.read(&mut ts).await.unwrap();
         writeln!(&mut str, "Temp inside: {:.3}", convert_to_celsius(temp)).unwrap();
@@ -130,8 +130,12 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn adc_ratio(raw_read: u16) -> f64 {
-    raw_read as f64 / ADC_MAX as f64
+fn adc_ratio(raw_read: u16, inversed: bool) -> f32 {
+    let measurement = match inversed {
+        true => ADC_MAX - raw_read,
+        false => raw_read,
+    };
+    measurement as f32 / ADC_MAX as f32
 }
 
 fn convert_to_celsius(raw_temp: u16) -> f32 {
