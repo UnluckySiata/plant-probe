@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod state;
+
 use embassy_executor::Spawner;
 use embassy_rp::adc::{self, Adc, Channel};
 use embassy_rp::bind_interrupts;
@@ -9,6 +11,7 @@ use embassy_rp::i2c;
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::{self, Driver};
 use embassy_time::{Delay, Timer};
+use state::State;
 use {defmt_rtt as _, panic_probe as _};
 
 use embedded_graphics::{
@@ -22,13 +25,8 @@ use ssd1306::{prelude::*, I2CDisplayInterface, Ssd1306};
 use ds18b20::{self, Ds18b20};
 use one_wire_bus::{self, Address};
 
-use core::fmt::Write;
-use heapless::String;
-
 #[derive(Debug)]
 enum Err {}
-
-const ADC_MAX: u16 = 4096;
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
@@ -53,9 +51,9 @@ async fn main(spawner: Spawner) {
     let mut adc_pin_0 = Channel::new_pin(p.PIN_26, Pull::None);
     let mut adc_pin_1 = Channel::new_pin(p.PIN_27, Pull::None);
     let mut adc_pin_2 = Channel::new_pin(p.PIN_28, Pull::None);
-    let mut ts = Channel::new_temp_sensor(p.ADC_TEMP_SENSOR);
 
-    let btn_pin = Input::new(p.PIN_20, Pull::Up);
+    let switch_btn = Input::new(p.PIN_19, Pull::Up);
+    let progress_btn = Input::new(p.PIN_20, Pull::Up);
 
     let sda_pin = p.PIN_0;
     let scl_pin = p.PIN_1;
@@ -73,8 +71,6 @@ async fn main(spawner: Spawner) {
         .text_color(BinaryColor::On)
         .build();
 
-    let mut str: String<1024> = String::new();
-
     let ow_pin = OutputOpenDrain::new(p.PIN_22, Level::Low);
     let mut one_wire_bus = one_wire_bus::OneWire::new(ow_pin).unwrap();
 
@@ -90,57 +86,46 @@ async fn main(spawner: Spawner) {
     }
     let sensor = Ds18b20::new::<Err>(addr).unwrap();
 
-    loop {
-        Timer::after_millis(500).await;
+    let mut s = State::new();
 
-        str.clear();
+    loop {
+        Timer::after_millis(50).await;
+
         display.clear(BinaryColor::Off).unwrap();
 
-        match btn_pin.get_level() {
-            Level::Low => {
-                led.set_high();
-            }
-            Level::High => {
-                led.set_low();
-            }
+        if switch_btn.get_level() == Level::Low {
+            s.switch();
         }
 
-        let level = adc.read(&mut adc_pin_0).await.unwrap();
-        writeln!(&mut str, "Adc0: {:.2}", adc_ratio(level, false)).unwrap();
+        if progress_btn.get_level() == Level::Low {
+            s.progress();
+        }
 
-        let level = adc.read(&mut adc_pin_1).await.unwrap();
-        writeln!(&mut str, "Adc1: {:.2}", adc_ratio(level, true)).unwrap();
+        if s.bad_level() {
+            led.set_high();
+        } else {
+            led.set_low();
+        }
 
-        let level = adc.read(&mut adc_pin_2).await.unwrap();
-        writeln!(&mut str, "Adc2: {:.2}", adc_ratio(level, false)).unwrap();
+        if s.is_measuring() {
+            let light = adc.read(&mut adc_pin_0).await.unwrap();
+            let humidity = adc.read(&mut adc_pin_1).await.unwrap();
 
-        let temp = adc.read(&mut ts).await.unwrap();
-        writeln!(&mut str, "Temp inside: {:.3}", convert_to_celsius(temp)).unwrap();
+            sensor
+                .start_temp_measurement(&mut one_wire_bus, &mut delay)
+                .unwrap();
+            let data = sensor.read_data(&mut one_wire_bus, &mut delay).unwrap();
 
-        sensor
-            .start_temp_measurement(&mut one_wire_bus, &mut delay)
-            .unwrap();
-        let data = sensor.read_data(&mut one_wire_bus, &mut delay).unwrap();
-        writeln!(&mut str, "Temp outside: {:.3}", data.temperature).unwrap();
+            s.update_measurements(data.temperature, light, humidity);
+        } else {
+            let level = adc.read(&mut adc_pin_2).await.unwrap();
 
-        Text::with_baseline(&str, Point::zero(), text_style, Baseline::Top)
+            s.update_config(level);
+        }
+
+        Text::with_baseline(s.get_repr(), Point::zero(), text_style, Baseline::Top)
             .draw(&mut display)
             .unwrap();
         display.flush().unwrap();
     }
-}
-
-fn adc_ratio(raw_read: u16, inversed: bool) -> f32 {
-    let measurement = match inversed {
-        true => ADC_MAX - raw_read,
-        false => raw_read,
-    };
-    measurement as f32 / ADC_MAX as f32
-}
-
-fn convert_to_celsius(raw_temp: u16) -> f32 {
-    let temp = 27.0 - (raw_temp as f32 * 3.3 / 4096.0 - 0.706) / 0.001721;
-    let sign = if temp < 0.0 { -1.0 } else { 1.0 };
-    let rounded_temp_x10: i16 = ((temp * 10.0) + 0.5 * sign) as i16;
-    (rounded_temp_x10 as f32) / 10.0
 }
