@@ -141,9 +141,11 @@ impl State {
             Task::Measuring => {
                 writeln!(
                     &mut self.out_str,
-                    "Temp: {:.2}\n\
-                    Light: {:.2}\n\
-                    Humidity: {:.2}
+                    "\
+                             Measurement\n\
+                    Temp     {:.2}\n\
+                    Light    {:.2}\n\
+                    Humidity {:.2}\
                     ",
                     self.temp, self.light, self.humidity,
                 )
@@ -152,9 +154,11 @@ impl State {
             Task::Configuring(_, _) => {
                 writeln!(
                     &mut self.out_str,
-                    "Temp {:.2} {:.2}\n\
-                    Light: {:.2} {:.2}\n\
-                    Humidity: {:.2} {:.2}
+                    "\
+                             Min   Max\n\
+                    Temp     {:.2} {:.2}\n\
+                    Light    {:.2} {:.2}\n\
+                    Humidity {:.2} {:.2}\
                     ",
                     self.temp_cfg.min,
                     self.temp_cfg.max,
