@@ -31,6 +31,7 @@ impl SensorConfig {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Variant {
     Min,
     Max,
@@ -139,9 +140,10 @@ impl State {
 
         match self.task {
             Task::Measuring => {
+                self.out_str.push_str("MEASURING\n\n").unwrap();
                 writeln!(
                     &mut self.out_str,
-                    "         Measurement\n\
+                    "         Value\n\
                     Temp     {:.2}\n\
                     Light    {:.2}\n\
                     Humidity {:.2}\
@@ -150,19 +152,38 @@ impl State {
                 )
                 .unwrap();
             }
-            Task::Configuring(_, _) => {
+            Task::Configuring(sensor, variant) => {
+
+                let chars = match (sensor, variant) {
+                    (Sensor::Temperature, Variant::Min) => [" ", "", ">", "", " ", "", " ", ""],
+                    (Sensor::Temperature, Variant::Max) => ["", " ", "", ">", "", " ", "", " "],
+                    (Sensor::Light, Variant::Min) => [" ", "", " ", "", ">", "", " ", ""],
+                    (Sensor::Light, Variant::Max) => ["", " ", "", " ", "", ">", "", " "],
+                    (Sensor::Humidity, Variant::Min) => [" ", "", " ", "", " ", "", ">", ""],
+                    (Sensor::Humidity, Variant::Max) => ["", " ", "", " ", "", " ", "", ">"],
+                };
+
+                self.out_str.push_str("CONFIGURING\n\n").unwrap();
                 writeln!(
                     &mut self.out_str,
-                    "         Min   Max\n\
-                    Temp     {:.2} {:.2}\n\
-                    Light    {:.2} {:.2}\n\
-                    Humidity {:.2} {:.2}\
+                    "          {}Min    {}Max\n\
+                    Temp     {}{:5.2} {}{:5.2}\n\
+                    Light    {}{:5.2} {}{:5.2}\n\
+                    Humidity {}{:5.2} {}{:5.2}\
                     ",
+                    chars[0],
+                    chars[1],
+                    chars[2],
                     self.temp_cfg.min,
+                    chars[3],
                     self.temp_cfg.max,
+                    chars[4],
                     self.light_cfg.min,
+                    chars[5],
                     self.light_cfg.max,
+                    chars[6],
                     self.humidity_cfg.min,
+                    chars[7],
                     self.humidity_cfg.max,
                 )
                 .unwrap();
