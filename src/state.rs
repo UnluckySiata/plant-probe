@@ -39,7 +39,7 @@ enum Variant {
 
 enum Task {
     Measuring,
-    Configuring(Sensor, Variant),
+    Configuring(Sensor, Variant, bool),
 }
 
 pub struct State {
@@ -74,6 +74,13 @@ impl State {
         }
     }
 
+    pub fn is_configuring(&self) -> bool {
+        match self.task {
+            Task::Configuring(_, _, true) => true,
+            _ => false,
+        }
+    }
+
     pub fn bad_level(&self) -> bool {
         if self.temp < self.temp_cfg.min
             || self.light < self.light_cfg.min
@@ -90,22 +97,22 @@ impl State {
     pub fn update_config(&mut self, level: u16) {
         let ratio = adc_ratio(level, false);
         match self.task {
-            Task::Configuring(Sensor::Temperature, Variant::Min) => {
+            Task::Configuring(Sensor::Temperature, Variant::Min, _) => {
                 self.temp_cfg.min = ratio * 100f32;
             }
-            Task::Configuring(Sensor::Temperature, Variant::Max) => {
+            Task::Configuring(Sensor::Temperature, Variant::Max, _) => {
                 self.temp_cfg.max = ratio * 100f32;
             }
-            Task::Configuring(Sensor::Light, Variant::Min) => {
+            Task::Configuring(Sensor::Light, Variant::Min, _) => {
                 self.light_cfg.min = ratio * 1f32;
             }
-            Task::Configuring(Sensor::Light, Variant::Max) => {
+            Task::Configuring(Sensor::Light, Variant::Max, _) => {
                 self.light_cfg.max = ratio * 1f32;
             }
-            Task::Configuring(Sensor::Humidity, Variant::Min) => {
+            Task::Configuring(Sensor::Humidity, Variant::Min, _) => {
                 self.humidity_cfg.min = ratio * 1f32;
             }
-            Task::Configuring(Sensor::Humidity, Variant::Max) => {
+            Task::Configuring(Sensor::Humidity, Variant::Max, _) => {
                 self.humidity_cfg.max = ratio * 1f32;
             }
             _ => {}
@@ -121,17 +128,26 @@ impl State {
     pub fn progress(&mut self) {
         self.task = match self.task {
             Task::Measuring => Task::Measuring,
-            Task::Configuring(sensor, Variant::Min) => Task::Configuring(sensor, Variant::Max),
-            Task::Configuring(sensor, Variant::Max) => {
-                Task::Configuring(sensor.next(), Variant::Min)
+            Task::Configuring(sensor, Variant::Min, _) => {
+                Task::Configuring(sensor, Variant::Max, false)
+            }
+            Task::Configuring(sensor, Variant::Max, _) => {
+                Task::Configuring(sensor.next(), Variant::Min, false)
             }
         }
     }
 
-    pub fn switch(&mut self) {
+    pub fn switch_state(&mut self) {
         self.task = match self.task {
-            Task::Measuring => Task::Configuring(Sensor::Temperature, Variant::Min),
-            Task::Configuring(_, _) => Task::Measuring,
+            Task::Measuring => Task::Configuring(Sensor::Temperature, Variant::Min, false),
+            Task::Configuring(_, _, _) => Task::Measuring,
+        }
+    }
+
+    pub fn switch_config(&mut self) {
+        self.task = match self.task {
+            Task::Measuring => Task::Measuring,
+            Task::Configuring(sensor, variant, b) => Task::Configuring(sensor, variant, !b),
         }
     }
 
@@ -152,8 +168,7 @@ impl State {
                 )
                 .unwrap();
             }
-            Task::Configuring(sensor, variant) => {
-
+            Task::Configuring(sensor, variant, configuring) => {
                 let chars = match (sensor, variant) {
                     (Sensor::Temperature, Variant::Min) => [" ", "", ">", "", " ", "", " ", ""],
                     (Sensor::Temperature, Variant::Max) => ["", " ", "", ">", "", " ", "", " "],
@@ -163,7 +178,8 @@ impl State {
                     (Sensor::Humidity, Variant::Max) => ["", " ", "", " ", "", " ", "", ">"],
                 };
 
-                self.out_str.push_str("CONFIGURING\n\n").unwrap();
+                let indicator = if configuring { "ON" } else { "OFF" };
+                writeln!(&mut self.out_str, "CONFIGURING {}\n", indicator).unwrap();
                 writeln!(
                     &mut self.out_str,
                     "          {}Min    {}Max\n\

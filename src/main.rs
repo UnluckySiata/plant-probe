@@ -52,6 +52,7 @@ async fn main(spawner: Spawner) {
     let mut adc_pin_1 = Channel::new_pin(p.PIN_27, Pull::None);
     let mut adc_pin_2 = Channel::new_pin(p.PIN_28, Pull::None);
 
+    let setting_btn = Input::new(p.PIN_18, Pull::Up);
     let switch_btn = Input::new(p.PIN_19, Pull::Up);
     let progress_btn = Input::new(p.PIN_20, Pull::Up);
 
@@ -93,8 +94,12 @@ async fn main(spawner: Spawner) {
 
         display.clear(BinaryColor::Off).unwrap();
 
+        if setting_btn.get_level() == Level::Low {
+            s.switch_config();
+        }
+
         if switch_btn.get_level() == Level::Low {
-            s.switch();
+            s.switch_state();
         }
 
         if progress_btn.get_level() == Level::Low {
@@ -117,7 +122,7 @@ async fn main(spawner: Spawner) {
             let data = sensor.read_data(&mut one_wire_bus, &mut delay).unwrap();
 
             s.update_measurements(data.temperature, light, humidity);
-        } else {
+        } else if s.is_configuring() {
             let level = adc.read(&mut adc_pin_2).await.unwrap();
 
             s.update_config(level);
